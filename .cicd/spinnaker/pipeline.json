@@ -1,7 +1,7 @@
 {
     "name": "stackstorm-k8s",
     "application": "stackstorm-k8s",
-    "disabled": true,
+    "disabled": false,
     "stages": [
         {
             "name": "Chart Build",
