@@ -1,1 +1,61 @@
-
+{
+    "name": "stackstorm-k8s",
+    "application": "stackstorm-k8s",
+    "disabled": true,
+    "stages": [
+        {
+            "name": "Chart Build",
+            "completeOtherBranchesThenFail": true,
+            "continuePipeline": false,
+            "failPipeline": false,
+            "job": "helm-chart-build",
+            "master": "ewe.builds.sb.karmalab.net",
+            "parameters": {
+                "CHART_PATH": "chart",
+                "GIT_ORG": "eg-chatops",
+                "GIT_REPO": "stackstorm-k8s",
+                "VERSION": "${trigger.parameters.version}"
+            },
+            "propertyFile": "helm-chart-build.properties",
+            "refId": "chartBuild",
+            "requisiteStageRefIds": [],
+            "type": "jenkins"
+        }
+    ],
+    "triggers": [
+        {
+            "branch": "master",
+            "enabled": true,
+            "project": "eg-chatops",
+            "slug": "stackstorm-k8s",
+            "source": "github",
+            "type": "git"
+        }
+    ],
+    "notifications": [
+        {
+            "address": "EGDXDEA@expediagroup.com",
+            "level": "pipeline",
+            "type": "email",
+            "when": [
+                "pipeline.failed"
+            ]
+        }
+    ],
+    "parameterConfig": [
+        {
+            "default": "${trigger.hash}",
+            "description": "The Git Commit ID to use in this pipeline",
+            "hasOptions": false,
+            "label": "Git Commit ID",
+            "name": "version",
+            "pinned": true,
+            "required": true
+        }
+    ],
+    "roles": [
+        "spinnakerusers"
+    ],
+    "limitConcurrent": true,
+    "keepWaitingPipelines": true
+}
