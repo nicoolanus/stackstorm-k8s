@@ -1,0 +1,383 @@
+global:
+  version: latest
+  application: eg-stackstorm
+  region: us-west-2
+  vault:
+    namespace: lab/islands
+    islandNamespace: buildtime
+  portMappings:
+    - name: http
+      port: 80
+      servicePort: 80
+      pathPrefixes:
+        - /
+
+tags:
+  isFeatureBranch: true
+
+chatops:
+  enabled: true
+  image:
+    repository: kumo-docker-release-local.artylab.expedia.biz
+    name: eg-stackstorm/eg-err-stackstorm
+    tag: 8299355cee712dfffecfa2dfff407dbc89ecaa5f
+    pullPolicy: IfNotPresent
+    pullSecret: artylab.expedia.biz
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "25m"
+  annotations:
+    sidecar.istio.io/inject: "false"
+  env:
+    ERRBOT_BOT_ADMINS: ""
+    ERRBOT_BOT_NAME: "@stewie"
+    ERRBOT_LOG_LEVEL: "INFO"
+
+stackstorm-ha:
+  image:
+    repository: public-docker-virtual.artylab.expedia.biz/stackstorm
+    pullSecret: artylab.expedia.biz
+
+  serviceAccount:
+    create: false
+    serviceAccountName: eg-stackstorm
+    serviceAccountAnnotations:
+      helm.sh/hook: pre-install, pre-upgrade, pre-rollback
+    serviceAccountLabels:
+      vault.expediagroup.com/create-role: "true"
+
+  st2:
+    username: s-eg-stackstorm-ldap
+    createSt2AuthSecret: false
+    config: |
+      [database]
+      host = mongodb://{{ .Release.Name }}-mongodb.{{ .Release.Namespace }}:27017/?
+      db_name = db
+
+      [coordination]
+      url = redis://{{ .Release.Name }}-redis.{{ .Release.Namespace }}:26379?sentinel=mymaster
+
+      [api]
+      allow_origin = '*'
+
+      [auth]
+      # See Authentication with LDAP for more details https://docs.stackstorm.com/authentication.html#ldap
+      backend = ldap
+      enable = True
+      # backend_kwargs are configured in the st2.secrets.conf which can be found in the templates/_secrets.tpl
+
+      [rbac]
+      # rbac is enabled through the flag in values, this enables rbac based on LDAP Groups
+      # See RBAC Roles Based on LDAP Groups: https://docs.stackstorm.com/rbac.html#automatically-granting-roles-based-on-ldap-group-membership
+      sync_remote_groups = True
+    existingConfigSecret: eg-stackstorm-st2-secrets-conf
+    packs:
+      configs:
+        backstage.yaml: |
+          backstage_api_url: "https://backstage-backend.rcp.us-west-2.buildtime.test.exp-aws.net/api"
+          backstage_ssl_cert: "/st2/certs/expedia_internal_certs.pem"
+          backstage_backend_secret: "{{st2kv.system.backstage_backend_secret | decrypt_kv}}"
+      images:
+        - repository: kumo-docker-release-local.artylab.expedia.biz
+          name: eg-stackstorm/backstage-st2-pack
+          tag: d424289c072f2029e78933a110d79bbde9163167
+          pullPolicy: IfNotPresent
+          pullSecret: artylab.expedia.biz
+
+    rbac:
+      enabled: true
+      roles:
+        sample.yaml: ""
+        super_user.yaml: |
+          ---
+          name: "super_user"
+          description: "Super User Role which grants extra permissions to execute actions to user"
+          enabled: true
+          permission_grants:
+              -
+                  resource_uid: "pack:automation"
+                  permission_types:
+                     - "action_all"
+                     - "action_alias_all"
+                     - "rule_all"
+              -
+                  resource_uid: "pack:chatops"
+                  permission_types:
+                     - "action_all"
+                     - "action_alias_all"
+                     - "rule_all"
+              -
+                  resource_uid: "pack:core"
+                  permission_types:
+                     - "action_all"
+                     - "action_alias_all"
+                     - "rule_all"
+        pack_admin.yaml: |
+          ---
+          name: "pack_admin"
+          description: "Pack admin role grants permissions to install packs"
+          enabled: true
+          permission_grants:
+              -
+                  resource_uid: "pack:automation"
+                  permission_types:
+                     - "pack_install"
+                     - "pack_register"
+              -
+                  resource_uid: "pack:packs"
+                  permission_types:
+                     - "action_execute"
+      assignments:
+        st2admin.yaml: ""
+        packadmin.yaml: |
+          ---
+          username: pack_admin
+          roles:
+            - pack_admin
+            - observer
+        backstage.yaml: |
+          ---
+          username: backstage
+          roles:
+            - observer
+
+      # StackStorm RBAC LDAP groups-to-roles mapping rules, shipped in '/opt/stackstorm/rbac/mappings/'
+      # See RBAC Roles Based on LDAP Groups: https://docs.stackstorm.com/rbac.html#automatically-granting-roles-based-on-ldap-group-membership
+      # WARNING: LDAP Group attributes are case sensitive.
+      mappings:
+        admins.yaml: |
+          ---
+          group: "CN=eg-stackstorm-admin,OU=Security Groups,DC=SEA,DC=CORP,DC=EXPECN,DC=com"
+          description: "Automatically grant admin role to all eg-stackstorm-admin group members."
+          roles:
+            - "admin"
+        superuser.yaml: |
+          ---
+          group: "CN=eg-stackstorm-super-user,OU=Security Groups,DC=SEA,DC=CORP,DC=EXPECN,DC=com"
+          description: "Automatically grant super_user role to all eg-stackstorm-super-user group members."
+          roles:
+            - "super_user"
+        users.yaml: |
+          ---
+          group: "CN=eg-stackstorm-user,OU=Security Groups,DC=SEA,DC=CORP,DC=EXPECN,DC=com"
+          description: "Automatically grant observer role to all eg-stackstorm-user group members."
+          roles:
+            - "observer"
+
+  st2garbagecollector:
+    annotations:
+      sidecar.istio.io/inject: "false"
+
+  st2chatops:
+    enabled: false
+    createSecret: false
+    image:
+      repository: public-docker-virtual.artylab.expedia.biz/stackstorm
+    annotations:
+      sidecar.istio.io/inject: "false"
+
+  st2web:
+    replicas: 1
+
+  st2auth:
+    replicas: 1
+    annotations:
+      sidecar.istio.io/inject: "false"
+    extra_volumes:
+      - name: expedia-internal-certs
+        mount:
+          mountPath: /st2/certs/expedia_internal_certs.pem
+          subPath: expedia_internal_certs.pem
+        volume:
+          configMap:
+            name: "{{ .Release.Name }}-st2-expedia-internal-certs"
+
+  st2api:
+    replicas: 1
+    annotations:
+      sidecar.istio.io/inject: "false"
+    extra_volumes:
+      - name: st2api-exec-vol
+        mount:
+          mountPath: /opt/stackstorm/st2/bin/st2api
+          subPath: st2api
+        volume:
+          configMap:
+            name: "{{ .Release.Name }}-tls-redis-monkey-patch"
+            defaultMode: 0755
+      - name: openapi-yaml-j2
+        mount:
+          mountPath: /opt/stackstorm/st2/lib/python3.8/site-packages/st2common/openapi.yaml.j2
+          subPath: openapi.yaml.j2
+        volume:
+          configMap:
+            name: "{{ .Release.Name }}-st2-openapi-definition"
+
+  st2stream:
+    replicas: 1
+    annotations:
+      sidecar.istio.io/inject: "false"
+
+  st2rulesengine:
+    replicas: 1
+    annotations:
+      sidecar.istio.io/inject: "false"
+
+  st2timersengine:
+    annotations:
+      sidecar.istio.io/inject: "false"
+
+  st2workflowengine:
+    replicas: 1
+    annotations:
+      sidecar.istio.io/inject: "false"
+    extra_volumes:
+      - name: st2workflowengine-exec-vol
+        mount:
+          mountPath: /opt/stackstorm/st2/bin/st2workflowengine
+          subPath: st2workflowengine
+        volume:
+          configMap:
+            name: "{{ .Release.Name }}-tls-redis-monkey-patch"
+            defaultMode: 0755
+
+  st2scheduler:
+    replicas: 1
+    annotations:
+      sidecar.istio.io/inject: "false"
+    extra_volumes:
+      - name: st2scheduler-exec-vol
+        mount:
+          mountPath: /opt/stackstorm/st2/bin/st2scheduler
+          subPath: st2scheduler
+        volume:
+          configMap:
+            name: "{{ .Release.Name }}-tls-redis-monkey-patch"
+            defaultMode: 0755
+
+  st2notifier:
+    replicas: 1
+    annotations:
+      sidecar.istio.io/inject: "false"
+
+  st2actionrunner:
+    replicas: 1
+    annotations:
+      sidecar.istio.io/inject: "false"
+    envFromSecrets:
+      - eg-stackstorm-st2actionrunner
+      - eg-stackstorm-st2artifactory-pypi
+    extra_volumes:
+      - name: st2actionrunner-exec-vol
+        mount:
+          mountPath: /opt/stackstorm/st2/bin/st2actionrunner
+          subPath: st2actionrunner
+        volume:
+          configMap:
+            name: "{{ .Release.Name }}-tls-redis-monkey-patch"
+            defaultMode: 0755
+      - name: expedia-internal-certs
+        mount:
+          mountPath: /st2/certs/expedia_internal_certs.pem
+          subPath: expedia_internal_certs.pem
+        volume:
+          configMap:
+            name: "{{ .Release.Name }}-st2-expedia-internal-certs"
+
+  st2sensorcontainer:
+    annotations:
+      sidecar.istio.io/inject: "false"
+
+  st2client:
+    annotations:
+      sidecar.istio.io/inject: "false"
+
+  st2tests:
+    annotations:
+      sidecar.istio.io/inject: "false"
+
+  jobs:
+    annotations:
+      sidecar.istio.io/inject: "false"
+    preRegisterContentCommand:
+      - "/bin/bash"
+      - "-c"
+      - |
+        sed -i -e 's/default: "chatops"/default: "errbot"/g' /opt/stackstorm/packs/chatops/actions/post_message.yaml
+
+  rabbitmq:
+    image:
+      registry: public-docker-virtual.artylab.expedia.biz
+      pullSecrets:
+        - artylab.expedia.biz
+    podAnnotations:
+      sidecar.istio.io/inject: "false"
+    replicaCount: 1
+    persistence:
+      enabled: false
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "250m"
+      limits:
+        memory: "1Gi"
+        cpu: "500m"
+
+  # StackStorm HA Ingress
+  #
+  # We are using paved-road-istio as our ingress, and we have created additional service in templates for this purpose
+  # https://github.expedia.biz/EGPlatform/eg-helm-charts/tree/main/charts/paved-road-istio
+  # WARNING: please make sure ingress from stackstorm-ha is disabled
+  ingress:
+    enabled: false
+
+  # Disable redis & mongodb bundled with stackstorm-ha chart
+  # in favour of using ones bundled with eg-stackstorm chart
+  redis:
+    enabled: false
+  mongodb:
+    enabled: false
+
+redis:
+  enabled: true
+  architecture: replication
+  image:
+    registry: public-docker-virtual.artylab.expedia.biz
+    pullSecrets:
+      - artylab.expedia.biz
+  auth:
+    enabled: false
+    sentinel: false
+  master:
+    persistence:
+      enabled: false
+    podAnnotations:
+      sidecar.istio.io/inject: "false"
+  replica:
+    replicaCount: 1
+    persistence:
+      enabled: false
+    podAnnotations:
+      sidecar.istio.io/inject: "false"
+  sentinel:
+    enabled: true
+    image:
+      registry: public-docker-virtual.artylab.expedia.biz
+      pullSecrets:
+        - artylab.expedia.biz
+
+mongodb:
+  enabled: true
+  image:
+    registry: public-docker-virtual.artylab.expedia.biz
+    pullSecrets:
+      - artylab.expedia.biz
+  podAnnotations:
+    sidecar.istio.io/inject: "false"
+  auth:
+    enabled: false
+  arbiter:
+    enabled: false
+  persistence:
+    enabled: false

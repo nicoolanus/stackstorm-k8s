@@ -1,0 +1,27 @@
+apiVersion: v2
+name: eg-stackstorm
+version: 0.41.0
+maintainers:
+  - name: "Developer Experience Acceleration"
+    email: "EGDXDEA@expediagroup.com"
+    url: "https://github.expedia.biz/eg-chatops/eg-stackstorm"
+dependencies:
+  - name: paved-road-istio
+    version: 4.0.0
+    repository: "@public-helm-virtual"
+# We manage this dependency manually in sub charts
+# original chart requires changes in order to make it work in the rcp
+# we should aim to move this changes into the oss chart
+#  - name: stackstorm-ha
+#    version:  0.100.0
+#    repository: "@public-helm-virtual"
+#
+# Below charts are for spinning up part of in cluster infra, dependencies in the stackstorm-ha are outdated
+  - name: redis
+    version: 16.13.2
+    repository: https://charts.bitnami.com/bitnami
+    condition: redis.enabled
+  - name: mongodb
+    version: 11.1.10
+    repository: https://raw.githubusercontent.com/bitnami/charts/pre-2022/bitnami
+    condition: mongodb.enabled
