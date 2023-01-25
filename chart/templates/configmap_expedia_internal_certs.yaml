@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-st2-expedia-internal-certs
+  annotations:
+    description: Expedia internalChain-Internal2015C1 and internalRoot-ExpediaRoot2015 certs
+  labels:
+    {{- include "stackstorm-ha.labels" (list $ "st2") | nindent 4 }}
+data:
+  expedia_internal_certs.pem: |
+{{ .Files.Get "certs/expedia_internal_certs.pem" | indent 4 }}

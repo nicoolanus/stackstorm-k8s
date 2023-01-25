@@ -1,0 +1,73 @@
+# This ConfigMap exists to insert a monkey patch into the st2 executables that depend on Redis.
+# There is a bug in eventlet that causes tls-enabled Redis to fail, so our provisioned Redis
+# requires this patch in order to work.
+#
+# We should be able to remove this once we transition to Stackstorm 3.8, which is supposed to
+# have a fix for this problem.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-tls-redis-monkey-patch
+  annotations:
+    description: Eventlet monkey patch to allow for TLS-enabled Redis access
+data:
+  st2api: |
+    #!/opt/stackstorm/st2/bin/python
+    
+    import eventlet
+    import socket    
+    import sys    
+    
+    from eventlet.green import ssl
+    from st2api.cmd import api
+    
+    if __name__ == "__main__":
+        eventlet.monkey_patch(socket=True)
+        ssl.timeout_exc = socket.timeout
+        
+        sys.exit(api.main())
+  st2scheduler: |
+    #!/opt/stackstorm/st2/bin/python
+    
+    import eventlet
+    import socket    
+    import sys    
+    
+    from eventlet.green import ssl
+    from st2actions.cmd import scheduler
+    
+    if __name__ == "__main__":
+        eventlet.monkey_patch(socket=True)
+        ssl.timeout_exc = socket.timeout
+            
+        sys.exit(scheduler.main())
+  st2actionrunner: |
+    #!/opt/stackstorm/st2/bin/python
+    
+    import eventlet
+    import socket    
+    import sys    
+    
+    from eventlet.green import ssl
+    from st2actions.cmd import actionrunner
+    
+    if __name__ == "__main__":
+        eventlet.monkey_patch(socket=True)
+        ssl.timeout_exc = socket.timeout
+            
+        sys.exit(actionrunner.main())
+  st2workflowengine: |
+    #!/opt/stackstorm/st2/bin/python
+    
+    import eventlet
+    import socket    
+    import sys    
+    
+    from eventlet.green import ssl
+    from st2actions.cmd import workflow_engine
+    
+    if __name__ == "__main__":
+        eventlet.monkey_patch(socket=True)
+        ssl.timeout_exc = socket.timeout
+            
+        sys.exit(workflow_engine.main())    

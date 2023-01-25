@@ -1,0 +1,19 @@
+# This service is used by paved-road-istio to expose st2web outside cluster
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "stackstorm-ha.labels" (list $ "st2web") | nindent 4 }}
+    {{- include "common.labels" . | indent 4 }}
+spec:
+  ports:
+    - name: http
+      port: 80
+      protocol: TCP
+      appProtocol: http
+      targetPort: 80
+  selector: {{- include "stackstorm-ha.selectorLabels" (list $ "st2web") | nindent 4 }}
+  sessionAffinity: None
+  type: ClusterIP

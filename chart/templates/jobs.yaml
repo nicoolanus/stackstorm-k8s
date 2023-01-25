@@ -1,0 +1,91 @@
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-job-eg-load-secrets
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "stackstorm-ha.labels" (list $ "st2") | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install, pre-upgrade, pre-rollback
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  template:
+    metadata:
+      name: job-eg-load-secrets
+      labels:
+        {{- include "stackstorm-ha.labels" (list $ "st2") | indent 8 }}
+      annotations:
+        sidecar.istio.io/inject: "false"
+        vault.hashicorp.com/agent-pre-populate-only: "true"
+        vault.hashicorp.com/agent-init-first: "true"
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/namespace: {{ .Values.global.vault.namespace }}
+        vault.hashicorp.com/role: {{ (printf "%s.%s" $.Release.Namespace (include "st2.serviceaccount.name" .)) }}
+        vault.hashicorp.com/agent-inject-secret-secrets.yaml: {{ .Values.global.vault.islandNamespace }}/{{ .Release.Namespace }}/kv-v2/data/{{ (include "st2.serviceaccount.name" .) }}/secrets
+        vault.hashicorp.com/agent-inject-template-secrets.yaml: | {{- include "st2.secrets.conf.secret" . | indent 10 }}
+        vault.hashicorp.com/agent-inject-secret-st2chatops.yaml: {{ .Values.global.vault.islandNamespace }}/{{ .Release.Namespace }}/kv-v2/data/{{ (include "st2.serviceaccount.name" .) }}/st2chatops
+        vault.hashicorp.com/agent-inject-template-st2chatops.yaml: | {{- include "st2chatops.secret" . | indent 10 }}
+        {{- if not (index .Values "stackstorm-ha" "st2" "createSt2AuthSecret") }}
+        vault.hashicorp.com/agent-inject-secret-st2auth.yaml: {{ .Values.global.vault.islandNamespace }}/{{ .Release.Namespace }}/kv-v2/data/{{ (include "st2.serviceaccount.name" .) }}/secrets
+        vault.hashicorp.com/agent-inject-template-st2auth.yaml: | {{- include "st2auth.secret" . | indent 10 }}
+        {{- end }}
+        vault.hashicorp.com/agent-inject-secret-st2actionrunner.yaml: {{ .Values.global.vault.islandNamespace }}/{{ .Release.Namespace }}/kv-v2/data/{{ (include "st2.serviceaccount.name" .) }}/secrets
+        vault.hashicorp.com/agent-inject-template-st2actionrunner.yaml: | {{- include "st2actionrunner.secret" . | indent 10 }}
+        vault.hashicorp.com/agent-inject-secret-st2artifactory-pypi.yaml: {{ .Values.global.vault.islandNamespace }}/{{ .Release.Namespace }}/kv-v2/data/{{ (include "st2.serviceaccount.name" .) }}/secrets
+        vault.hashicorp.com/agent-inject-template-st2artifactory-pypi.yaml: | {{- include "st2artifactory-pypi.secret" . | indent 10 }}
+    spec:
+      imagePullSecrets:
+      - name: artylab.expedia.biz
+      containers:
+      - name: load-secrets
+        image: 'public-docker-virtual.artylab.expedia.biz/bitnami/kubectl:1.23.0'
+        imagePullPolicy: IfNotPresent
+        command:
+          - /bin/sh
+          - -c
+          - |
+            kubectl apply -f /vault/secrets/secrets.yaml
+            kubectl apply -f /vault/secrets/st2chatops.yaml
+            kubectl apply -f /vault/secrets/st2actionrunner.yaml
+            kubectl apply -f /vault/secrets/st2artifactory-pypi.yaml
+            {{- if not (index .Values "stackstorm-ha" "st2" "createSt2AuthSecret") }}
+            kubectl apply -f /vault/secrets/st2auth.yaml
+            {{- end }}
+      restartPolicy: OnFailure
+      serviceAccountName: {{ (include "st2.serviceaccount.name" .) }}
+
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-job-eg-tidy-up
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "common.labels" . | indent 4 }}
+  annotations:
+    helm.sh/hook: post-delete
+    helm.sh/hook-delete-policy: before-hook-creation, hook-succeeded
+spec:
+  template:
+    metadata:
+      name: job-eg-tidy-up
+      labels:
+        {{- include "stackstorm-ha.labels" (list $ "st2") | indent 8 }}
+      annotations:
+        sidecar.istio.io/inject: "false"
+    spec:
+      imagePullSecrets:
+      - name: artylab.expedia.biz
+      containers:
+      - name: tidy-up-resources
+        image: 'public-docker-virtual.artylab.expedia.biz/bitnami/kubectl:1.23.0'
+        imagePullPolicy: IfNotPresent
+        command:
+          - /bin/sh
+          - -c
+          - |
+            kubectl delete job -l release={{ .Release.Name }} -n {{ .Release.Namespace }}
+            kubectl delete secret -l release={{ .Release.Name }} -n {{ .Release.Namespace }}
+      restartPolicy: OnFailure
+      serviceAccountName: {{ (include "st2.serviceaccount.name" .) }}

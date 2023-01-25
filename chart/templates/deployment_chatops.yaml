@@ -1,0 +1,87 @@
+# Notify users about running both chatops at the same time
+{{- if and .Values.chatops.enabled (index .Values "stackstorm-ha" "st2chatops" "enabled") }}
+{{- fail "You have 2 chatops ingtegrations enabled. Please enable only one." }}
+{{- end }}
+
+{{ if .Values.chatops.enabled -}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-st2chatops
+  labels: {{- include "stackstorm-ha.labels" (list $ "st2chatops") | nindent 4 }}
+  {{- if .Values.chatops.annotations }}
+  annotations: {{- toYaml .Values.chatops.annotations | nindent 4 }}
+  {{- end }}
+spec:
+  selector:
+    matchLabels: {{- include "stackstorm-ha.selectorLabels" (list $ "st2chatops") | nindent 6 }}
+  # As errbot can't be HA scaled properly, we deploy only single replica of chatops
+  replicas: 1
+  template:
+    metadata:
+      labels: {{- include "stackstorm-ha.labels" (list $ "st2chatops") | nindent 8 }}
+      annotations:
+        {{- if .Values.chatops.annotations }}
+          {{- toYaml .Values.chatops.annotations | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- if .Values.chatops.image.pullSecret }}
+      imagePullSecrets:
+      - name: {{ .Values.chatops.image.pullSecret }}
+      {{- end }}
+      initContainers:
+      - name: wait-for-api
+        image: public-docker-virtual.artylab.expedia.biz/busybox:1.28
+        command:
+          - 'sh'
+          - '-c'
+          - >
+            until nc -z -w 2 {{ .Release.Name }}-st2api 9101 && echo st2api ready;
+              do sleep 2;
+            done
+      - name: wait-for-auth
+        image: public-docker-virtual.artylab.expedia.biz/busybox:1.28
+        command:
+          - 'sh'
+          - '-c'
+          - >
+            until nc -z -w 2 {{ .Release.Name }}-st2auth 9100 && echo st2auth ready;
+              do sleep 2;
+            done
+      - name: wait-for-stream
+        image: public-docker-virtual.artylab.expedia.biz/busybox:1.28
+        command:
+          - 'sh'
+          - '-c'
+          - >
+            until nc -z -w 2 {{ .Release.Name }}-st2stream 9102 && echo st2stream ready;
+              do sleep 2;
+            done
+      containers:
+      - name: chatops
+        {{- with .Values.chatops.image }}
+        image: '{{ .repository }}/{{ .name }}:{{ .tag }}'
+        imagePullPolicy: {{ .pullPolicy | default "IfNotPresent" }}
+        {{- end }}
+        {{- if .Values.chatops.env }}
+        env:
+        {{- include "stackstorm-ha.customEnv" .Values.chatops | nindent 8 }}
+        {{- end }}
+        envFrom:
+        - configMapRef:
+            name: {{ .Release.Name }}-st2-urls
+        - secretRef:
+            name: {{ .Release.Name }}-st2-auth
+        - secretRef:
+            name: {{ .Release.Name }}-st2chatops
+        ports:
+        - containerPort: 3141
+        livenessProbe:
+          httpGet:
+            path: "/echo"
+            port: 3141
+          initialDelaySeconds: 20
+          periodSeconds: 60
+        resources: {{- toYaml .Values.chatops.resources | nindent 10 }}
+{{- end }}

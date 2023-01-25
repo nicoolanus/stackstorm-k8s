@@ -1,0 +1,15 @@
+{
+  "methods": [
+    {
+      "type": "email",
+      "location": "egdxdea@expediagroup.com",
+      "severity": [
+        "info",
+        "error",
+        "warn"
+      ]
+    }
+  ]
+}
+
+
